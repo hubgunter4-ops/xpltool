@@ -1,174 +1,83 @@
 # XPL Toolkit
 
-> **Advanced Vulnerability Exploitation Framework** — Basado en la skill `xpl` de Manus
+> **Toolkit de reconocimiento y verificación de seguridad autorizada.** Incluye flujos interactivos y batch, consulta de CVE, caché local, auditoría y reportes HTML/Markdown.
 
-![Version](https://img.shields.io/badge/version-2.0.0-blue)
-![Python](https://img.shields.io/badge/python-3.11+-green)
-![License](https://img.shields.io/badge/license-MIT-yellow)
+## Archivos del repositorio
 
-Framework interactivo y automatizado para pruebas de penetración autorizadas, reconocimiento web, verificación de vulnerabilidades, búsqueda de CVEs, y documentación de hallazgos. Incluye modo batch para pipelines CI/CD.
+| Archivo | Descripción |
+| --- | --- |
+| `xpl_toolkit_v2.py` | Implementación recomendada, con validación de objetivos, caché NVD, detección de servicios, reportes y modo batch. |
+| `xpl_toolkit.py` | Implementación v1 del flujo interactivo y consulta de CVE. |
+| `exploitdb_30.sh` | Módulo Bash con treinta consultas agrupadas a ExploitDB. |
+| `tests/test_toolkits.py` | Pruebas unitarias locales, sin red y sin herramientas externas. |
+| `README.md` | Instalación, ejemplos de uso y resumen de mejoras. |
 
----
+## Instalación
 
-## Estructura del Repositorio
+El requisito base es Python 3.11 o posterior. Las herramientas de reconocimiento son opcionales y se detectan en tiempo de ejecución: `nmap`, `httpx`, `subfinder`, `gobuster`, `searchsploit`, `hydra`, `sqlmap`, `cewl` y `msfconsole`, entre otras.
 
-```
-xpl-toolkit/
-├── README.md                          ← Este archivo
-├── SKILL.md                           ← Definición original de la skill xpl
-├── LICENSE                            ← Licencia MIT
-├── scripts/
-│   ├── xpl_toolkit.py                 ← Toolkit v1 (interactivo básico)
-│   ├── xpl_toolkit_v2.py             ← Toolkit v2 (avanzado, todas las mejoras)
-│   ├── cve_lookup.py                  ← Script independiente CVE Lookup (NVD API)
-│   ├── manage_session.py              ← Gestión de sesiones de pentesting
-│   └── generate_wordlist.py           ← Generación de wordlists con cewl
-├── references/
-│   ├── compilation_workflow.md        ← Guía de compilación de exploits C/C++
-│   ├── exploit_search_guide.md        ← Guía de búsqueda en ExploitDB
-│   ├── httpx_guide.md                 ← Guía de reconocimiento web con httpx
-│   ├── nmap_scripts.md                ← Referencia de scripts Nmap
-│   └── wordlists/
-│       ├── ssh_users.txt              ← 18 usuarios SSH comunes
-│       ├── ssh_pass.txt               ← 22 contraseñas SSH comunes
-│       ├── db_default.txt             ← 1336 contraseñas por defecto (DB/servicios)
-│       └── web_common.txt             ← 4752 rutas/directorios web comunes
-├── templates/
-│   └── exploit_report_template.md     ← Plantilla de reporte de explotación
-├── docs/
-│   └── changelog.md                   ← Historial de cambios
-└── wordlists/                         ← Wordlists descargadas de SecLists
-```
-
----
-
-## Características
-
-| Versión | Características |
-| :--- | :--- |
-| **v1** (`xpl_toolkit.py`) | Interactivo básico: sesión, reconocimiento, Nmap, CVE lookup, exploits, fuerza bruta, reportes Markdown |
-| **v2** (`xpl_toolkit_v2.py`) | Paralelización, UI/UX mejorada, detección WAF/SSL/TLS, caché SQLite de CVEs, modo batch, reportes HTML con gráficos, exploits LFI/RFI/XXE/SSRF/Deserialización, seguridad avanzada, wordlist management, logging rotativo |
-
----
-
-## Uso Rápido
-
-### Toolkit v2 (recomendado)
+La clave del NVD se configura únicamente mediante el entorno:
 
 ```bash
-# Interactivo completo
-python3 scripts/xpl_toolkit_v2.py 192.168.1.10 smb
-
-# Solo CVE Lookup (con caché y API Key NVD)
-python3 scripts/xpl_toolkit_v2.py --cve-only "apache httpd 2.4" --min-severity HIGH
-
-# Exportar CVEs a JSON
-python3 scripts/xpl_toolkit_v2.py --cve-only "log4j" --output json --out cves.json
-
-# Modo batch (sin interacción, para cron/pipelines)
-python3 scripts/xpl_toolkit_v2.py --batch 192.168.1.10 smb --batch-auth verify
-
-# Verificar herramientas
-python3 scripts/xpl_toolkit_v2.py --check-tools
-
-# Descargar wordlists de SecLists
-python3 scripts/xpl_toolkit_v2.py --download-seclists
-
-# Estadísticas de caché
-python3 scripts/xpl_toolkit_v2.py --cache-stats
+export NVD_API_KEY="tu-clave-nvd"
 ```
 
-### Toolkit v1 (básico)
+No se deben almacenar credenciales en el código ni en el control de versiones.
+
+## Uso recomendado
+
+El flujo interactivo v2 se inicia así:
 
 ```bash
-python3 scripts/xpl_toolkit.py 192.168.1.10 ms17-010
-python3 scripts/xpl_toolkit.py example.com web-recon
-python3 scripts/xpl_toolkit.py --cve-only "apache 2.4.49"
-python3 scripts/xpl_toolkit.py --check-tools
+python3 xpl_toolkit_v2.py 192.168.1.10 smb
+python3 xpl_toolkit_v2.py example.com web-recon
 ```
 
-### CVE Lookup independiente
+El modo batch no interactivo usa `verify` por defecto y valida el objetivo antes de iniciar acciones:
 
 ```bash
-python3 scripts/cve_lookup.py "openssh 8.2"
-python3 scripts/cve_lookup.py "wordpress 6.1" --min-severity HIGH
-python3 scripts/cve_lookup.py "log4j" --output json --out resultados.json
+python3 xpl_toolkit_v2.py --batch example.com web-recon --batch-auth verify
 ```
 
----
+Las consultas CVE pueden exportarse a JSON o CSV:
 
-## Herramientas Requeridas
-
-| Herramienta | Propósito | Instalación |
-| :--- | :--- | :--- |
-| `nmap` | Escaneo de puertos y scripts de vulnerabilidad | `apt install nmap` |
-| `httpx` | Probing HTTP/HTTPS y detección de tecnología | `go install github.com/projectdiscovery/httpx/...` |
-| `hydra` | Fuerza bruta contra servicios | `apt install hydra` |
-| `sqlmap` | Detección y explotación de SQL Injection | `apt install sqlmap` |
-| `searchsploit` | Búsqueda en ExploitDB | `apt install exploitdb` |
-| `metasploit-framework` | Framework de explotación | `apt install metasploit-framework` |
-| `subfinder` | Enumeración de subdominios | `go install github.com/projectdiscovery/subfinder/...` |
-| `gobuster` | Descubrimiento de directorios web | `apt install gobuster` |
-| `cewl` | Generación de wordlists personalizadas | `apt install cewl` |
-| `gcc` | Compilación de exploits C/C++ | `apt install gcc g++` |
-
-El toolkit detecta automáticamente qué herramientas faltan y ofrece instalarlas.
-
----
-
-## Flujo de Trabajo
-
-```
-1. Sesión → 2. Herramientas → 3. Servicios → 4. Detección Avanzada
-   → 5. Autorización → 6. Reconocimiento → 7. Verificación (Nmap)
-   → 8. CVE Lookup → 9. Exploits/Brute Force → 10. Post-Explotación
-   → 11. Reporte
+```bash
+python3 xpl_toolkit_v2.py --cve-only "apache httpd 2.4" --min-severity HIGH
+python3 xpl_toolkit_v2.py --cve-only "log4j" --output json --out cves.json
+python3 xpl_toolkit_v2.py --cache-stats
 ```
 
----
+El módulo de consultas ExploitDB requiere un objetivo y un directorio de salida:
 
-## Control de Autorización
+```bash
+bash exploitdb_30.sh <target> <output_dir>
+```
 
-Antes de cualquier acción intrusiva, el toolkit solicita confirmación explícita:
+## Flujo de autorización
 
-| Opción | Acción |
-| :--- | :--- |
-| `1` Authorized pentest | Explotación completa autorizada |
-| `2` CTF / Lab environment | Entorno controlado de práctica |
-| `3` Verify only | Solo verificación pasiva (seguro) |
-| `4` Cancel | Detener y sugerir escaneo pasivo |
+Antes de acciones dirigidas al objetivo, el toolkit solicita un modo de autorización. `verify` permite únicamente verificaciones; `full` habilita el flujo de pruebas activas configurado por el usuario; `cancel` detiene la sesión. El modo batch no solicita entrada y debe invocarse con la autorización elegida de forma explícita.
 
----
+> Este proyecto no debe utilizarse contra sistemas de terceros sin permiso documentado. Las salidas de reconocimiento y los reportes pueden contener información sensible y deben protegerse.
 
-## Seguridad
+## Mejoras aplicadas en la versión revisada
 
-- Validación de targets (IP/dominio) antes de cualquier acción
-- Sanitización de paths anti path-traversal
-- Log de auditoría JSON (`audit.log`) con timestamp, acción, target y severidad
-- Rate-limiting automático en consultas NVD
-- No se ejecutan ataques DoS sin confirmación explícita
+| Área | Mejora |
+| --- | --- |
+| Secretos | Se retiró la clave NVD embebida y se sustituyó por `NVD_API_KEY`. |
+| Validación | IPs, IPv6 y nombres DNS se validan antes de crear sesiones o lanzar herramientas. |
+| Código | Se corrigieron el alias `metasploit`/`msfconsole`, el registro de wordlists sin sesión y la inicialización de resultados HTTP. |
+| Caché | Las respuestas vacías se tratan como aciertos de caché y el parámetro de antigüedad se respeta. Los reintentos HTTP 403 son limitados. |
+| Seguridad | La detección WAF es pasiva en la revisión; los datos externos se escapan en reportes HTML. |
+| Logging | Los handlers no se duplican al inicializar logging más de una vez. |
+| Bash | `Xpldb.md` se convirtió en `exploitdb_30.sh`, se corrigieron las continuaciones de línea y los escapes de `$service` y `$2`. |
+| Calidad | Se añadieron README, `.gitignore` y pruebas unitarias reproducibles. |
 
----
+## Verificación local
 
-## Mejoras v2 vs v1
+```bash
+python3 -m unittest discover -s tests -v
+python3 -m py_compile xpl_toolkit.py xpl_toolkit_v2.py
+bash -n exploitdb_30.sh
+```
 
-| Mejora | Descripción |
-| :--- | :--- |
-| Paralelización | Banner grabbing y probing con ThreadPoolExecutor (8 workers) |
-| UI/UX | Menús interactivos, barras de progreso, spinner, colores |
-| Detección avanzada | WAF (9 proveedores), SSL/TLS analysis, banner grabbing (16 puertos) |
-| Caché CVEs | SQLite local con TTL 24h, hashing SHA-256 |
-| Modo batch | Ejecución no interactiva para cron/pipelines |
-| Reportes HTML | Gráficos Plotly, estadísticas visuales, badges |
-| Exploits adicionales | LFI, RFI, XXE, SSRF, Insecure Deserialization |
-| Seguridad | Class Security, auditoría, sanitización |
-| Wordlist management | Descarga SecLists, merge, dedup |
-| Logging | RotatingFileHandler, SIGINT handler |
-
----
-
-## Licencia
-
-MIT License. Ver `LICENSE` para detalles.
-
-> **Aviso**: Este toolkit es para uso en pruebas de penetración **autorizadas** únicamente. El uso no autorizado contra sistemas de terceros es ilegal.
+Las validaciones anteriores no realizan conexiones de red, no ejecutan escaneos y no lanzan herramientas de explotación.

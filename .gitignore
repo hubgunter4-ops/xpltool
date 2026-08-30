@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.cache/
+audit.log
+sessions/
+reports/
+*.log
+.env
+
+# Artefactos locales de wordlists
+wordlists/*.txt

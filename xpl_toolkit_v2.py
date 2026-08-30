@@ -39,6 +39,7 @@ import socket
 import ssl
 import io
 import signal
+import ipaddress
 import urllib.parse
 import urllib.request
 import urllib.error
@@ -46,13 +47,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+from html import escape as html_escape
 
 # =============================================================================
 #  CONFIGURACIÓN GLOBAL
 # =============================================================================
 
-VERSION = "2.0.0"
-NVD_API_KEY = "c135c920-d9f5-48d3-8a94-8c200a43aea2"
+VERSION = "2.1.0"
+# La clave se obtiene del entorno; nunca debe almacenarse en el repositorio.
+NVD_API_KEY = os.getenv("NVD_API_KEY", "")
 SESSIONS_DIR = os.path.expanduser("/home/ubuntu/sessions")
 SKILL_DIR = os.path.expanduser("/home/ubuntu/skills/xpl")
 TOOLKIT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -119,7 +122,7 @@ REQUIRED_TOOLS = {
     "enum4linux":  {"install": "sudo apt-get install -y enum4linux",             "pkg": "enum4linux"},
     "smbclient":   {"install": "sudo apt-get install -y smbclient",              "pkg": "smbclient"},
     "gobuster":    {"install": "sudo apt-get install -y gobuster",               "pkg": "gobuster"},
-    "metasploit":  {"install": "sudo apt-get install -y metasploit-framework",   "pkg": "metasploit-framework"},
+    "metasploit":  {"install": "sudo apt-get install -y metasploit-framework",   "pkg": "metasploit-framework", "binary": "msfconsole"},
     "wfuzz":       {"install": "sudo apt-get install -y wfuzz",                  "pkg": "wfuzz"},
     "dig":         {"install": "sudo apt-get install -y dnsutils",               "pkg": "dnsutils"},
     "curl":        {"install": "sudo apt-get install -y curl",                   "pkg": "curl"},
@@ -190,6 +193,10 @@ def setup_logging(log_dir):
 
     logger = logging.getLogger("xpl_toolkit")
     logger.setLevel(logging.DEBUG)
+    # Evita duplicar líneas si la función se invoca más de una vez.
+    for handler in logger.handlers[:]:
+        handler.close()
+        logger.removeHandler(handler)
 
     # File handler con rotación
     fh = logging.handlers.RotatingFileHandler(
@@ -322,23 +329,35 @@ class Security:
 
     @staticmethod
     def validate_target(target):
-        """Valida que el objetivo sea una IP o dominio válido."""
+        """Valida una IP o nombre DNS sin aceptar URLs ni argumentos de shell."""
+        if not isinstance(target, str):
+            return False, None
         target = target.strip()
-        # IP v4
-        if re.match(r'^(\d{1,3}\.){3}\d{1,3}$', target):
-            parts = target.split('.')
-            if all(0 <= int(p) <= 255 for p in parts):
-                return True, target
-        # Dominio
-        if re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*$', target):
+        if not target or len(target) > 253 or any(c in target for c in "\r\n"):
+            return False, None
+
+        try:
+            ipaddress.ip_address(target)
             return True, target
-        return False, None
+        except ValueError:
+            pass
+
+        labels = target.rstrip(".").split(".")
+        if not all(
+            label and len(label) <= 63
+            and re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?", label)
+            for label in labels
+        ):
+            return False, None
+        return True, target.rstrip(".")
 
     @staticmethod
     def validate_port(port):
-        if isinstance(port, int) and 1 <= port <= 65535:
-            return True
-        return False
+        try:
+            value = int(port)
+        except (TypeError, ValueError):
+            return False
+        return 1 <= value <= 65535
 
     @staticmethod
     def sanitize_path(path):
@@ -380,9 +399,15 @@ class CVECache:
 
     def get(self, query, max_age_hours=24):
         h = self._hash(query)
+        try:
+            max_age_hours = max(0, float(max_age_hours))
+        except (TypeError, ValueError):
+            max_age_hours = 24
         row = self.conn.execute(
-            "SELECT results_json, total_results FROM cve_cache WHERE query_hash=? AND expires_at > datetime('now')",
-            (h,)
+            "SELECT results_json, total_results FROM cve_cache "
+            "WHERE query_hash=? AND expires_at > datetime('now') "
+            "AND created_at > datetime('now', ?)",
+            (h, f"-{max_age_hours:g} hours")
         ).fetchone()
         if row:
             return json.loads(row[0]), row[1]
@@ -401,7 +426,9 @@ class CVECache:
         return {"total_entries": row[0], "unique_queries": row[1]}
 
     def close(self):
-        self.conn.close()
+        if self.conn:
+            self.conn.close()
+            self.conn = None
 
 
 # =============================================================================
@@ -463,8 +490,13 @@ def update_session_status(session_dir, status):
 #  VERIFICACIÓN E INSTALACIÓN DE HERRAMIENTAS
 # =============================================================================
 
+def tool_command(name):
+    """Devuelve el binario real de una herramienta configurada."""
+    return REQUIRED_TOOLS.get(name, {}).get("binary", name)
+
+
 def tool_installed(name):
-    return shutil.which(name) is not None
+    return shutil.which(tool_command(name)) is not None
 
 def check_and_install_tools(selected=None, interactive=True):
     """Verifica herramientas e instala las faltantes."""
@@ -507,15 +539,8 @@ def check_and_install_tools(selected=None, interactive=True):
                     print(cc("TIMEOUT", Colors.RED))
                 except Exception as e:
                     print(cc(f"ERROR: {e}", Colors.RED))
-        elif not interactive:
-            for tool in missing:
-                cfg = REQUIRED_TOOLS.get(tool, {})
-                cmd = cfg.get("install", "")
-                if cmd:
-                    try:
-                        subprocess.run(shlex.split(cmd), capture_output=True, text=True, timeout=180)
-                    except Exception:
-                        pass
+    elif missing:
+        info("Modo no interactivo: no se instalarán herramientas automáticamente.")
 
     return installed + [t for t in missing if tool_installed(t)]
 
@@ -650,48 +675,26 @@ def detect_waf(target):
     }
 
     wafs_found = []
-    test_payloads = [
-        "/?'\x22><script>alert(1)</script>",
-        "/../../../etc/passwd",
-        "/ AND 1=1",
-        "/UNION SELECT NULL",
-    ]
 
     try:
-        for payload in test_payloads:
-            url = f"https://{target}{payload}"
-            req = urllib.request.Request(
-                url, headers={"User-Agent": "XPL-Toolkit/2.0 WAF-Check"}
-            )
-            try:
-                with urllib.request.urlopen(req, timeout=5) as resp:
-                    headers = dict(resp.headers)
-                    body = resp.read(2000).decode("utf-8", errors="replace")
-            except urllib.error.HTTPError as e:
-                headers = dict(e.headers) if e.headers else {}
-                body = e.read(2000).decode("utf-8", errors="replace") if e.fp else ""
-            except Exception:
-                continue
-
-            response_text = " ".join(str(headers).lower().split()) + " " + body.lower()
-            for waf_name, patterns in waf_indicators.items():
-                if any(p in response_text for p in patterns) and waf_name not in wafs_found:
-                    wafs_found.append(waf_name)
-
-        # Detección por headers
+        # Comprobación pasiva: no se envían payloads de explotación en verify.
+        req = urllib.request.Request(
+            f"https://{target}/", headers={"User-Agent": "XPL-Toolkit/2.1 WAF-Check"}
+        )
         try:
-            req = urllib.request.Request(f"https://{target}/", headers={"User-Agent": "XPL-Toolkit/2.0"})
             with urllib.request.urlopen(req, timeout=5) as resp:
                 headers = dict(resp.headers)
+                body = resp.read(2000).decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as e:
+            headers = dict(e.headers) if e.headers else {}
+            body = e.read(2000).decode("utf-8", errors="replace") if e.fp else ""
         except Exception:
-            headers = {}
+            return None
 
-        for header_name, header_val in headers.items():
-            val_lower = str(header_val).lower()
-            for waf_name, patterns in waf_indicators.items():
-                if any(p in val_lower for p in patterns) and waf_name not in wafs_found:
-                    wafs_found.append(waf_name)
-
+        response_text = " ".join(str(headers).lower().split()) + " " + body.lower()
+        for waf_name, patterns in waf_indicators.items():
+            if any(p in response_text for p in patterns):
+                wafs_found.append(waf_name)
     except Exception:
         pass
 
@@ -772,10 +775,18 @@ def parse_cve_results(raw_vulns):
     return parsed
 
 def fetch_cves_cached(query, limit=50, min_severity=None, api_key=NVD_API_KEY):
-    """Busca CVEs con caché local."""
+    """Busca CVEs con caché local y reintentos limitados ante rate limiting."""
+    if not isinstance(query, str) or not query.strip():
+        warn("La consulta CVE no puede estar vacía.")
+        return []
+    try:
+        limit = max(1, min(int(limit), 2000))
+    except (TypeError, ValueError):
+        limit = 50
+
     cache = CVECache()
     cached, total = cache.get(query)
-    if cached:
+    if cached is not None:
         print(f"  {cc('[CACHÉ]', Colors.DIM)} Resultados cacheados ({len(cached)} CVEs)")
         cache.close()
         results = cached
@@ -788,6 +799,7 @@ def fetch_cves_cached(query, limit=50, min_severity=None, api_key=NVD_API_KEY):
         print(f"  {cc('[API]', Colors.CYAN)} Consultando NVD para: {query}")
         print(f"  {cc(f'API Key: {api_key[:8]}...', Colors.DIM)}")
 
+        retries = 0
         while True:
             params = {
                 "keywordSearch": query,
@@ -803,9 +815,11 @@ def fetch_cves_cached(query, limit=50, min_severity=None, api_key=NVD_API_KEY):
                 with urllib.request.urlopen(req, timeout=30) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
             except urllib.error.HTTPError as e:
-                if e.code == 403:
-                    warn("Rate limit. Esperando...")
-                    time.sleep(30)
+                if e.code == 403 and retries < 3:
+                    retries += 1
+                    wait_seconds = min(30 * retries, 90)
+                    warn(f"Rate limit. Reintento {retries}/3 en {wait_seconds}s...")
+                    time.sleep(wait_seconds)
                     continue
                 error(f"HTTP {e.code}: {e.reason}")
                 break
@@ -813,6 +827,7 @@ def fetch_cves_cached(query, limit=50, min_severity=None, api_key=NVD_API_KEY):
                 error(f"Red: {e.reason}")
                 break
 
+            retries = 0
             vulns = data.get("vulnerabilities", [])
             all_vulns.extend(vulns)
             total = data.get("totalResults", len(all_vulns))
@@ -922,6 +937,7 @@ def web_recon(target, session_dir):
     step_info(3, "Reconocimiento Web")
 
     results = {}
+    live = []
 
     # Subdominios (paralelo)
     subdomains_file = os.path.join(session_dir, "assets/subdomains.txt")
@@ -1341,6 +1357,14 @@ def generate_report(target, vuln, session_dir, status, cve_results=None,
 def generate_html_report(target, vulnerability, status, cve_results, services,
                          waf, tls_info, timestamp, auth_mode, tools_used):
     """Genera un reporte HTML completo con gráficos."""
+    # Todos los valores externos se escapan antes de insertarlos en HTML.
+    esc_target = html_escape(str(target), quote=True)
+    esc_vulnerability = html_escape(str(vulnerability), quote=True)
+    esc_status = html_escape(str(status), quote=True)
+    esc_timestamp = html_escape(str(timestamp), quote=True)
+    esc_auth_mode = html_escape(str(auth_mode), quote=True)
+    esc_tools_used = html_escape(str(tools_used), quote=True)
+
     try:
         import plotly.graph_objects as go
         import plotly.utils
@@ -1375,7 +1399,7 @@ def generate_html_report(target, vulnerability, status, cve_results, services,
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>XPL Report — {target}</title>
+<title>XPL Report — {esc_target}</title>
 <style>
   :root {{ --bg: #0f172a; --card: #1e293b; --text: #e2e8f0; --accent: #38bdf8; --red: #ef4444; --green: #22c55e; --yellow: #eab308; }}
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
@@ -1405,7 +1429,7 @@ def generate_html_report(target, vulnerability, status, cve_results, services,
 <body>
 
 <h1>🛡️ XPL Toolkit Report</h1>
-<p style="color:#94a3b8">Target: <strong>{target}</strong> | Vulnerability: <strong>{vulnerability}</strong> | Date: {timestamp}</p>
+<p style="color:#94a3b8">Target: <strong>{esc_target}</strong> | Vulnerability: <strong>{esc_vulnerability}</strong> | Date: {esc_timestamp}</p>
 
 <div class="card">
   <div class="grid">
@@ -1418,11 +1442,11 @@ def generate_html_report(target, vulnerability, status, cve_results, services,
 
 <h2>Executive Summary</h2>
 <div class="card">
-  <p><strong>Target:</strong> {target}</p>
-  <p><strong>Vulnerability:</strong> {vulnerability}</p>
-  <p><strong>Status:</strong> <span class="badge badge-{'success' if status=='SUCCESS' else 'warning'}">{status}</span></p>
-  <p><strong>Auth Mode:</strong> {auth_mode}</p>
-  <p><strong>Tools:</strong> {tools_used}</p>
+  <p><strong>Target:</strong> {esc_target}</p>
+  <p><strong>Vulnerability:</strong> {esc_vulnerability}</p>
+  <p><strong>Status:</strong> <span class="badge badge-{'success' if status=='SUCCESS' else 'warning'}">{esc_status}</span></p>
+  <p><strong>Auth Mode:</strong> {esc_auth_mode}</p>
+  <p><strong>Tools:</strong> {esc_tools_used}</p>
 </div>
 
 """
@@ -1432,26 +1456,35 @@ def generate_html_report(target, vulnerability, status, cve_results, services,
         html += "<h2>Detected Services</h2>\n<div class='card'>\n"
         html += "<table><tr><th>Port</th><th>Service</th><th>Version</th></tr>\n"
         for s in services:
-            html += f"<tr><td>{s['port']}/tcp</td><td>{s['service']}</td><td>{s.get('version', 'N/A')}</td></tr>\n"
+            html += (
+                f"<tr><td>{html_escape(str(s.get('port', 'N/A')), quote=True)}/tcp</td>"
+                f"<td>{html_escape(str(s.get('service', 'N/A')), quote=True)}</td>"
+                f"<td>{html_escape(str(s.get('version', 'N/A')), quote=True)}</td></tr>\n"
+            )
         html += "</table>\n</div>\n"
 
     # WAF
     if waf:
-        html += f"<h2>WAF Detection</h2>\n<div class='card'><p>WAFs detected: <strong>{', '.join(waf)}</strong></p></div>\n"
+        waf_text = html_escape(', '.join(map(str, waf)), quote=True)
+        html += f"<h2>WAF Detection</h2>\n<div class='card'><p>WAFs detected: <strong>{waf_text}</strong></p></div>\n"
 
     # TLS
     if tls_info and tls_info.get("supported"):
         html += "<h2>SSL/TLS Analysis</h2>\n<div class='card'>\n"
-        html += f"<p>Supported versions: {', '.join(tls_info['supported'])}</p>\n"
+        supported = html_escape(', '.join(map(str, tls_info['supported'])), quote=True)
+        html += f"<p>Supported versions: {supported}</p>\n"
         cert = tls_info.get("certificate", {})
         if cert:
-            html += f"<p>Certificate Subject: {cert.get('subject', {})}</p>\n"
-            html += f"<p>Issuer: {cert.get('issuer', {})}</p>\n"
-            html += f"<p>Expires: {cert.get('not_after', 'N/A')}</p>\n"
+            subject = html_escape(str(cert.get('subject', {})), quote=True)
+            issuer = html_escape(str(cert.get('issuer', {})), quote=True)
+            not_after = html_escape(str(cert.get('not_after', 'N/A')), quote=True)
+            html += f"<p>Certificate Subject: {subject}</p>\n"
+            html += f"<p>Issuer: {issuer}</p>\n"
+            html += f"<p>Expires: {not_after}</p>\n"
         if tls_info.get("warnings"):
             html += "<p style='color:#f97316'>Warnings:</p><ul>"
             for w in tls_info["warnings"]:
-                html += f"<li>{w}</li>"
+                html += f"<li>{html_escape(str(w), quote=True)}</li>"
             html += "</ul>"
         html += "</div>\n"
 
@@ -1460,10 +1493,18 @@ def generate_html_report(target, vulnerability, status, cve_results, services,
         html += "<h2>CVE Results</h2>\n<div class='card'>\n"
         html += "<table><tr><th>CVE ID</th><th>Severity</th><th>CVSS</th><th>Date</th><th>Description</th></tr>\n"
         for r in cve_results[:50]:
-            sev = r.get("severity", "N/A") or "N/A"
+            sev = str(r.get("severity", "N/A") or "N/A").upper()
+            sev_class = re.sub(r"[^A-Z]", "", sev) or "UNKNOWN"
             score = f"{r['cvss_score']:.1f}" if r.get("cvss_score") is not None else "N/A"
-            desc = (r.get("description", "")[:80] + "...") if len(r.get("description", "")) > 80 else r.get("description", "")
-            html += f"<tr><td>{r['cve_id']}</td><td class='sev-{sev}'>{sev}</td><td>{score}</td><td>{r.get('published', '')[:10]}</td><td>{desc}</td></tr>\n"
+            desc_raw = str(r.get("description", ""))
+            desc = (desc_raw[:80] + "...") if len(desc_raw) > 80 else desc_raw
+            cve_id = html_escape(str(r.get("cve_id", "N/A")), quote=True)
+            published = html_escape(str(r.get("published", ""))[:10], quote=True)
+            html += (
+                f"<tr><td>{cve_id}</td><td class='sev-{sev_class}'>"
+                f"{html_escape(sev, quote=True)}</td><td>{score}</td>"
+                f"<td>{published}</td><td>{html_escape(desc, quote=True)}</td></tr>\n"
+            )
         html += "</table>\n</div>\n"
 
         # Gráfico
@@ -1478,7 +1519,7 @@ def generate_html_report(target, vulnerability, status, cve_results, services,
 
     html += """
 <div class="footer">
-  <p>Generated by XPL Toolkit v""" + VERSION + """ — """ + timestamp + """</p>
+  <p>Generated by XPL Toolkit v""" + html_escape(VERSION, quote=True) + """ — """ + html_escape(str(timestamp), quote=True) + """</p>
 </div>
 </body>
 </html>"""
@@ -1572,6 +1613,11 @@ def batch_mode(args):
     """Ejecuta el flujo completo sin interacción (para cron/pipelines)."""
     banner()
     target = args.target
+    valid, normalized_target = Security.validate_target(target)
+    if not valid:
+        error(f"Target '{target}' no es una IP o dominio válido. Operación cancelada.")
+        sys.exit(2)
+    target = normalized_target
     vuln = args.vulnerability or "general"
     auth_mode = args.batch_auth or "verify"
 
@@ -1584,6 +1630,13 @@ def batch_mode(args):
     session_dir = init_session(target)
     info(f"Sesión: {session_dir}")
 
+    # La autorización precede a cualquier acción contra el objetivo.
+    if auth_mode == "cancel":
+        warn("Batch cancelado.")
+        update_session_status(session_dir, "CANCELLED")
+        return
+    log_to_session(session_dir, "Auth", auth_mode)
+
     # Herramientas
     available = check_and_install_tools(interactive=False)
 
@@ -1592,14 +1645,6 @@ def batch_mode(args):
 
     # Detección avanzada
     adv = advanced_detection(target, session_dir)
-
-    # Autorización
-    if auth_mode == "cancel":
-        warn("Batch cancelado.")
-        update_session_status(session_dir, "CANCELLED")
-        return
-
-    log_to_session(session_dir, "Auth", auth_mode)
 
     # Web recon si aplica
     if vuln in ("web-recon", "http", "https"):
@@ -1656,10 +1701,12 @@ def interactive_mode(args):
         error("Sin objetivo. Saliendo.")
         sys.exit(1)
 
-    # Validar
-    valid, _ = Security.validate_target(target)
+    # Validar antes de crear sesión o ejecutar herramientas.
+    valid, normalized_target = Security.validate_target(target)
     if not valid:
-        warn(f"Target '{target}' no parece una IP o dominio válido. Continuando de todas formas.")
+        error(f"Target '{target}' no es una IP o dominio válido. Operación cancelada.")
+        sys.exit(2)
+    target = normalized_target
 
     # Vulnerabilidad / servicio
     vuln = args.vulnerability
@@ -1676,6 +1723,14 @@ def interactive_mode(args):
     # Logger
     logger = setup_logging(os.path.join(session_dir, "logs"))
     logger.info(f"XPL Toolkit v{VERSION} started — Target: {target}")
+
+    # ── Autorización ──
+    auth_mode = request_authorization(target)
+    if auth_mode == "cancel":
+        warn("Cancelado.")
+        update_session_status(session_dir, "CANCELLED")
+        sys.exit(0)
+    log_to_session(session_dir, "Auth", auth_mode)
 
     # ── Herramientas ──
     available = check_and_install_tools()
@@ -1709,15 +1764,6 @@ def interactive_mode(args):
                     break
         else:
             mapped = "general"
-
-    # ── Autorización ──
-    auth_mode = request_authorization(target)
-    if auth_mode == "cancel":
-        warn("Cancelado.")
-        update_session_status(session_dir, "CANCELLED")
-        sys.exit(0)
-
-    log_to_session(session_dir, "Auth", auth_mode)
 
     # ── Reconocimiento web ──
     web_data = None
@@ -1925,7 +1971,7 @@ Caché:
         print(f"  Queries únicas:   {stats['unique_queries']}")
     elif args.batch:
         if not args.target:
-            error("Modo batch requiere --target")
+            error("Modo batch requiere un objetivo posicional: --batch <IP-o-dominio> [servicio]")
             sys.exit(1)
         batch_mode(args)
     elif args.target:

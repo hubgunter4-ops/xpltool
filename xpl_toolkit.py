@@ -22,14 +22,20 @@ import subprocess
 import argparse
 import shlex
 import shutil
+import ipaddress
 
 # =============================================================================
 #  CONFIGURACIÓN GLOBAL
 # =============================================================================
 
-NVD_API_KEY = "c135c920-d9f5-48d3-8a94-8c200a43aea2"
+# La clave se proporciona por entorno y no se almacena en el repositorio.
+NVD_API_KEY = os.getenv("NVD_API_KEY", "")
 SESSIONS_DIR = os.path.expanduser("/home/ubuntu/sessions")
 SKILL_DIR = os.path.expanduser("/home/ubuntu/skills/xpl")
+
+TOOL_BINARIES = {
+    "metasploit": "msfconsole",
+}
 
 WORDLISTS = {
     "ssh_users": os.path.join(SKILL_DIR, "references/wordlists/ssh_users.txt"),
@@ -138,7 +144,7 @@ REQUIRED_TOOLS = {
 
 def tool_installed(name):
     """Verifica si una herramienta está instalada."""
-    return shutil.which(name) is not None
+    return shutil.which(TOOL_BINARIES.get(name, name)) is not None
 
 def check_and_install_tools(selected_tools=None):
     """Verifica qué herramientas están instaladas y ofrece instalar las faltantes."""
@@ -196,7 +202,29 @@ def check_and_install_tools(selected_tools=None):
 # =============================================================================
 
 def sanitize(text):
-    return re.sub(r'[^a-zA-Z0-9]', '_', text)
+    return re.sub(r'[^a-zA-Z0-9]', '_', str(text))
+
+
+def validate_target(target):
+    """Valida una IP o nombre DNS sin aceptar URLs ni saltos de línea."""
+    if not isinstance(target, str):
+        return False, None
+    target = target.strip()
+    if not target or len(target) > 253 or any(c in target for c in "\r\n"):
+        return False, None
+    try:
+        ipaddress.ip_address(target)
+        return True, target
+    except ValueError:
+        pass
+    labels = target.rstrip(".").split(".")
+    if not all(
+        label and len(label) <= 63
+        and re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?", label)
+        for label in labels
+    ):
+        return False, None
+    return True, target.rstrip(".")
 
 def init_session(target):
     """Inicializa la estructura de sesión para un objetivo."""
@@ -484,7 +512,7 @@ def cve_lookup_query(keyword, limit=50, min_severity=None, output_format="table"
     delay = 0.6  # API key permite requests más frecuentes
 
     print(f"\n  {color(f'Buscando CVEs para:', Colors.YELLOW)} {keyword}")
-    print(f"  {color(f'API Key NVD:', Colors.DIM)} {NVD_API_KEY[:8]}...")
+    info("Autenticación NVD: configurada" if NVD_API_KEY else "Autenticación NVD: no configurada")
 
     while True:
         params = {
@@ -719,7 +747,7 @@ def brute_force(target, service, session_dir):
 #  DICIONARIOS PERSONALIZADOS (cewl)
 # =============================================================================
 
-def generate_wordlist(url, output_path, depth=2, min_len=5):
+def generate_wordlist(url, output_path, depth=2, min_len=5, session_dir=None):
     """Genera wordlist personalizada con cewl."""
     section("Generación de Wordlist Personalizada (cewl)")
 
@@ -744,7 +772,8 @@ def generate_wordlist(url, output_path, depth=2, min_len=5):
             with open(output_path) as f:
                 words = [l.strip() for l in f if l.strip()]
             success(f"Wordlist generada: {len(words)} palabras en {output_path}")
-            log_to_session(None, "cewl wordlist", f"{len(words)} palabras")
+            if session_dir:
+                log_to_session(session_dir, "cewl wordlist", f"{len(words)} palabras")
             return True
         else:
             error("cewl no generó el archivo de salida.")
@@ -1031,6 +1060,12 @@ def interactive_mode(args):
             error("No se proporcionó un objetivo. Saliendo.")
             sys.exit(1)
 
+    valid, normalized_target = validate_target(target)
+    if not valid:
+        error(f"El objetivo '{target}' no es una IP o dominio válido.")
+        sys.exit(2)
+    target = normalized_target
+
     # ── Tipo de prueba ──
     if args.vulnerability:
         vuln_or_service = args.vulnerability
@@ -1120,7 +1155,7 @@ def interactive_mode(args):
             if wl_choice == "s":
                 wl_url = input(f"  URL para cewl [{target}]: ").strip() or target
                 wl_out = os.path.join(session_dir, "assets/custom_wordlist.txt")
-                generate_wordlist(wl_url, wl_out)
+                generate_wordlist(wl_url, wl_out, session_dir=session_dir)
 
         # Fuerza bruta
         if mapped_service in ("ssh", "ftp", "mysql", "postgres", "mssql"):
