@@ -1,81 +1,125 @@
 # XPL Toolkit
 
-Toolkit de **reconocimiento y verificación de seguridad para activos autorizados**, escrito en Python y Bash. El repositorio incluye un flujo interactivo, un modo batch orientado a automatizaciones y consultas de CVE mediante la API pública del NVD.
+XPL Toolkit es una herramienta de línea de comandos para reconocimiento y verificación de seguridad sobre activos autorizados. El punto de entrada principal es `xpl_toolkit.py`, que reúne el flujo interactivo, el modo batch, las consultas CVE con NVD, los reportes y las funciones opcionales de verificación.
 
-> **Uso responsable:** utilízalo únicamente sobre sistemas propios, laboratorios o activos con autorización explícita. El modo `verify` es la opción predeterminada para el modo batch; las pruebas activas y cualquier intento de explotación requieren una autorización independiente y documentada.
+![Interfaz consolidada de XPL Toolkit](docs/xpltool-interface.png)
 
-## Estructura
+*Captura de documentación basada en salida local verificada; no contiene objetivos ni credenciales reales.*
 
-| Archivo | Propósito |
+> **Uso responsable:** ejecuta la herramienta sólo sobre sistemas propios, laboratorios o activos cubiertos por autorización explícita. El modo batch `verify` es la opción predeterminada para validación; cualquier prueba activa, explotación, fuerza bruta o post-explotación requiere autorización independiente y documentada.
+
+## Capacidades
+
+| Capacidad | Descripción |
 | --- | --- |
-| `xpl_toolkit_v2.py` | Versión recomendada, con caché CVE, reportes HTML/Markdown, validación, auditoría y modo batch. |
-| `xpl_toolkit.py` | Versión v1 compatible con el flujo interactivo básico. |
-| `exploitdb_30.sh` | Consultas agrupadas a ExploitDB, ejecutables sobre un objetivo y directorio de salida indicados. |
-| `XPL Toolkit.md` | Descripción ampliada del flujo y de las capacidades del proyecto. |
-| `tests/test_toolkits.py` | Pruebas unitarias sin red ni herramientas externas. |
+| Flujo interactivo | Solicita objetivo, servicio, autorización y etapas de reconocimiento, verificación y reporte. |
+| Modo batch | Permite ejecución no interactiva con `--batch-auth verify`, `full` o `cancel`. |
+| Consulta CVE | Consulta NVD, aplica filtros de severidad y puede exportar tabla, JSON o CSV. |
+| Caché local | Conserva resultados de CVE en una caché SQLite local para reducir consultas repetidas. |
+| Reportes | Genera reportes HTML y Markdown con valores externos escapados. |
+| Verificación de herramientas | Detecta dependencias externas y ofrece instalarlas sólo después de confirmación interactiva. |
+| Sesiones | Guarda cronología y artefactos de sesión fuera del repositorio, en `/home/ubuntu/sessions`. |
+
+El repositorio conserva `xpl_toolkit_v2.py` como compatibilidad temporal para instalaciones existentes. El script principal y recomendado es `xpl_toolkit.py`; no se crea un segundo punto de entrada nuevo.
 
 ## Requisitos
 
-Se requiere Python 3.11 o posterior. Las herramientas externas son opcionales y el toolkit informa cuando no están instaladas: `nmap`, `httpx`, `subfinder`, `gobuster`, `searchsploit`, `hydra`, `sqlmap`, `cewl` y, según el caso, `msfconsole`.
+Se requiere Python 3.11 o posterior. Las herramientas externas son opcionales y dependen del flujo elegido: `nmap`, `httpx`, `subfinder`, `gobuster`, `searchsploit`, `hydra`, `sqlmap`, `cewl`, `gcc`, `smbclient`, `enum4linux`, `dig`, `curl` y, en casos concretos, `msfconsole`.
 
-La clave del NVD, si se dispone de ella, debe configurarse mediante una variable de entorno y nunca debe escribirse en el código:
+La clave de NVD, si se dispone de ella, debe configurarse mediante una variable de entorno y nunca debe escribirse en el código:
 
 ```bash
 export NVD_API_KEY="tu-clave-nvd"
 ```
 
-## Uso
+El repositorio no declara una licencia explícita. No debe describirse como software open source hasta que el propietario añada una licencia.
 
-Para iniciar el flujo interactivo recomendado:
+## Inicio seguro
+
+Consulta la ayuda del script principal y las estadísticas de caché antes de realizar una evaluación:
 
 ```bash
-python3 xpl_toolkit_v2.py 192.168.1.10 smb
-python3 xpl_toolkit_v2.py example.com web-recon
+python3 xpl_toolkit.py --help
+python3 xpl_toolkit.py --cache-stats
 ```
 
-Para una ejecución no interactiva y segura por defecto:
+El modo de verificación de herramientas puede modificar el sistema mediante `apt-get` o `go install` después de una confirmación. Para inspeccionar sin instalar, usa entrada cerrada o ejecuta el chequeo desde un entorno que no permita confirmación:
 
 ```bash
-python3 xpl_toolkit_v2.py --batch example.com web-recon --batch-auth verify
+python3 xpl_toolkit.py --check-tools < /dev/null
+```
+
+## Uso autorizado
+
+Para iniciar el flujo interactivo:
+
+```bash
+python3 xpl_toolkit.py 192.0.2.10 smb
+python3 xpl_toolkit.py example.com web-recon
+```
+
+`192.0.2.10` es una dirección reservada para documentación y no concede autorización para escanear ningún sistema real.
+
+Para una ejecución no interactiva con verificación solamente:
+
+```bash
+python3 xpl_toolkit.py --batch example.com web-recon --batch-auth verify
+```
+
+El modo de explotación completa sólo puede utilizarse cuando la autorización cubre expresamente esa actividad:
+
+```bash
+python3 xpl_toolkit.py --batch AUTHORIZED_TARGET SERVICE --batch-auth full
 ```
 
 Otros modos disponibles:
 
 ```bash
-python3 xpl_toolkit_v2.py --cve-only "apache httpd 2.4" --min-severity HIGH
-python3 xpl_toolkit_v2.py --cve-only "log4j" --output json --out cves.json
-python3 xpl_toolkit_v2.py --check-tools
-python3 xpl_toolkit_v2.py --download-seclists
-python3 xpl_toolkit_v2.py --cache-stats
+python3 xpl_toolkit.py --cve-only "apache httpd 2.4" --min-severity HIGH
+python3 xpl_toolkit.py --cve-only "log4j" --output json --out cves.json
+python3 xpl_toolkit.py --download-seclists
+python3 xpl_toolkit.py --cache-stats
 ```
 
-El módulo Bash se ejecuta con dos argumentos obligatorios:
+El módulo Bash conserva su uso separado:
 
 ```bash
 bash exploitdb_30.sh <target> <output_dir>
 ```
 
-## Mejoras incorporadas
+Ese módulo ejecuta consultas `searchsploit` y debe utilizarse únicamente en un entorno autorizado.
 
-| Mejora | Resultado |
+## Flujo operativo
+
+El flujo típico crea una sesión, detecta servicios, realiza reconocimiento específico, consulta CVE, solicita autorización antes de acciones intrusivas, ejecuta verificaciones permitidas y genera reportes. Las funciones pueden transmitir tráfico al objetivo, consultar NVD, descargar listas de palabras, ejecutar herramientas locales o iniciar módulos externos según el modo escogido.
+
+Los resultados de reconocimiento, CVE, credenciales encontradas, topología, versiones y salidas de herramientas son información sensible. Conserva las sesiones fuera del repositorio, limita sus permisos y elimina tokens, nombres internos y objetivos fuera de alcance antes de compartir un reporte.
+
+## Estructura actual
+
+| Archivo | Propósito |
 | --- | --- |
-| Gestión de secretos | Se eliminó la clave NVD embebida de v1 y v2; ahora se lee desde `NVD_API_KEY`. |
-| Validación de entradas | Se validan IPs y nombres DNS antes de crear sesiones o ejecutar comandos. |
-| Correcciones de ejecución | Se arregló el alias `metasploit`/`msfconsole`, el registro de wordlists sin sesión y la inicialización de resultados HTTP. |
-| Caché CVE | Las respuestas vacías cacheadas se reconocen correctamente y los reintentos ante HTTP 403 están limitados. |
-| Reportes | Los valores procedentes del objetivo, NVD y servicios se escapan antes de insertarse en HTML. |
-| Logging | Se evita duplicar handlers cuando se inicializa el logger más de una vez. |
-| Módulo Bash | Se renombró desde `Xpldb.md`, se añadió una interfaz CLI y se corrigieron escapes de `$service` y `$2`. |
-| Mantenibilidad | Se añadieron `.gitignore`, pruebas unitarias y documentación de ejecución reproducible. |
+| `xpl_toolkit.py` | Punto de entrada principal consolidado. |
+| `xpl_toolkit_v2.py` | Compatibilidad temporal para invocaciones existentes. |
+| `exploitdb_30.sh` | Consultas agrupadas a ExploitDB. |
+| `XPL Toolkit.md` | Descripción ampliada del flujo y capacidades. |
+| `tests/test_toolkits.py` | Pruebas unitarias sin red ni herramientas externas. |
+| `docs/tutorial.md` | Tutorial reproducible y límites operativos. |
+| `docs/structure-suggestions.md` | Sugerencias de reorganización futura sin cambios aplicados. |
 
 ## Pruebas
 
-Las pruebas no hacen conexiones de red ni lanzan `nmap`, `hydra`, `sqlmap`, `searchsploit` u otras herramientas externas:
+Ejecuta las pruebas desde la raíz del repositorio:
 
 ```bash
 python3 -m unittest discover -s tests -v
-python3 -m py_compile xpl_toolkit.py xpl_toolkit_v2.py
+python3 -m py_compile xpl_toolkit.py xpl_toolkit_v2.py tests/test_toolkits.py
 bash -n exploitdb_30.sh
+python3 xpl_toolkit.py --check-tools < /dev/null
 ```
 
-Los artefactos locales como la caché SQLite, logs, sesiones y wordlists descargadas están excluidos mediante `.gitignore`.
+Las pruebas unitarias no hacen conexiones de red ni lanzan herramientas externas. Los artefactos locales como caché, logs, sesiones y wordlists permanecen excluidos mediante `.gitignore`.
+
+## Seguridad y divulgación
+
+Consulta [`SECURITY.md`](SECURITY.md) para reportar problemas del proyecto. No publiques credenciales, API keys, informes de evaluación, resultados de explotación ni datos de objetivos en issues o materiales promocionales.

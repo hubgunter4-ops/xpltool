@@ -1,0 +1,1 @@
+XPL Toolkit consolidates authorized security assessment workflows in `xpl_toolkit.py`: batch verification, NVD CVE lookup with caching, session tracking, and HTML/Markdown reports. Use only with written authorization. License is currently not declared. https://github.com/hubgunter4-ops/xpltool
