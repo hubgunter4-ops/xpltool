@@ -104,6 +104,13 @@ class WordlistRegressionTests(unittest.TestCase):
 
 
 class GuidedMenuTests(unittest.TestCase):
+    def test_cancelled_session_status_replaces_full_status_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp)
+            (session / "session.md").write_text("- **Status**: IN PROGRESS\n", encoding="utf-8")
+            v1.update_session_status(str(session), "CANCELLED")
+            self.assertEqual((session / "session.md").read_text(encoding="utf-8"), "- **Status**: CANCELLED\n")
+
     def test_menu_routes_to_existing_interactive_flow(self):
         args = type("Args", (), {})()
         with patch.object(v1, "menu", return_value="1"), patch.object(v1, "interactive_mode") as flow:

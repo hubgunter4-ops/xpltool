@@ -53,7 +53,7 @@ from html import escape as html_escape
 #  CONFIGURACIÓN GLOBAL
 # =============================================================================
 
-VERSION = "2.1.1"
+VERSION = "2.1.2"
 # La clave se obtiene del entorno; nunca debe almacenarse en el repositorio.
 NVD_API_KEY = os.getenv("NVD_API_KEY", "")
 SESSIONS_DIR = os.path.expanduser("/home/ubuntu/sessions")
@@ -486,7 +486,7 @@ def update_session_status(session_dir, status):
         return
     with open(session_md, "r") as f:
         content = f.read()
-    content = re.sub(r'\*\*Status\*\*: \w+', f"**Status**: {status}", content)
+    content = re.sub(r'\*\*Status\*\*: [^\n]+', f"**Status**: {status}", content)
     with open(session_md, "w") as f:
         f.write(content)
 

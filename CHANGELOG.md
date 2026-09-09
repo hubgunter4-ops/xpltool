@@ -4,6 +4,11 @@
 
 - Preparación de documentación, tutorial, feed y materiales de promoción para el punto de entrada consolidado.
 
+## [2.1.2] — 2026-09-09
+
+- Corregido el registro de sesiones canceladas para conservar exactamente el estado `CANCELLED`.
+- Verificada en vivo la ruta completa del menú guiado hasta la confirmación de autorización, sin tráfico de red.
+
 ## [2.1.1] — 2026-09-09
 
 - Añadido un menú principal interactivo y conciso para ejecutar las operaciones existentes mediante opciones numeradas.
