@@ -49,6 +49,19 @@ El modo de verificación de herramientas puede modificar el sistema mediante `ap
 python3 xpl_toolkit.py --check-tools < /dev/null
 ```
 
+Si ejecutas `python3 xpl_toolkit.py` sin argumentos, aparece un menú guiado conciso:
+
+| Opción | Acción |
+| --- | --- |
+| `1` | Evaluación guiada interactiva; reutiliza el flujo existente de objetivo, servicio y autorización. |
+| `2` | Consulta CVE con consulta y severidad mínima opcional. |
+| `3` | Verificación de herramientas; la instalación requiere confirmación. |
+| `4` | Estadísticas de caché local. |
+| `5` | Descarga de SecLists. |
+| `0` | Cancelar y salir sin ejecutar una operación. |
+
+El menú sólo reacomoda el acceso a funciones ya existentes. Los argumentos CLI directos, el modo batch y los formatos de salida se conservan.
+
 ## Uso autorizado
 
 Para iniciar el flujo interactivo:

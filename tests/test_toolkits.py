@@ -103,5 +103,24 @@ class WordlistRegressionTests(unittest.TestCase):
             self.assertEqual(output.read_text(encoding="utf-8"), "alpha\nbeta\n")
 
 
+class GuidedMenuTests(unittest.TestCase):
+    def test_menu_routes_to_existing_interactive_flow(self):
+        args = type("Args", (), {})()
+        with patch.object(v1, "menu", return_value="1"), patch.object(v1, "interactive_mode") as flow:
+            v1.guided_menu(args)
+        flow.assert_called_once_with(args)
+
+    def test_menu_accepts_invalid_choice_then_cancel(self):
+        args = type("Args", (), {})()
+        with patch.object(v1, "menu", side_effect=["x", "0"]):
+            v1.guided_menu(args)
+
+    def test_menu_handles_eof_without_running_an_operation(self):
+        args = type("Args", (), {})()
+        with patch.object(v1, "menu", side_effect=EOFError), patch.object(v1, "interactive_mode") as flow:
+            v1.guided_menu(args)
+        flow.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

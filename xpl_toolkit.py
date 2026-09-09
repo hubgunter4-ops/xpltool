@@ -53,7 +53,7 @@ from html import escape as html_escape
 #  CONFIGURACIÓN GLOBAL
 # =============================================================================
 
-VERSION = "2.1.0"
+VERSION = "2.1.1"
 # La clave se obtiene del entorno; nunca debe almacenarse en el repositorio.
 NVD_API_KEY = os.getenv("NVD_API_KEY", "")
 SESSIONS_DIR = os.path.expanduser("/home/ubuntu/sessions")
@@ -1932,32 +1932,97 @@ def interactive_mode(args):
 #  CLI PRINCIPAL
 # =============================================================================
 
+def guided_menu(args):
+    """Presenta un acceso guiado a las operaciones existentes del toolkit."""
+    banner()
+    options = {
+        "1": "Evaluación guiada (interactiva)",
+        "2": "Consulta CVE",
+        "3": "Verificar herramientas",
+        "4": "Estadísticas de caché",
+        "5": "Descargar SecLists",
+        "0": "Salir",
+    }
+    while True:
+        try:
+            choice = menu("MENÚ PRINCIPAL", options)
+        except (EOFError, KeyboardInterrupt):
+            print()
+            info("Entrada finalizada. No se ejecutó ninguna operación.")
+            return
+
+        if choice in ("0", "q", "quit", "salir"):
+            info("Operación cancelada.")
+            return
+        if choice == "1":
+            interactive_mode(args)
+            return
+        if choice == "2":
+            try:
+                query = input(f"  {cc('Consulta CVE:', Colors.BOLD)} ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                info("Consulta CVE cancelada.")
+                continue
+            if not query:
+                warn("La consulta no puede estar vacía.")
+                continue
+            try:
+                severity = input("  Severidad mínima [LOW/MEDIUM/HIGH/CRITICAL, vacío=ninguna]: ").strip().upper()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                info("Consulta CVE cancelada.")
+                continue
+            if severity and severity not in SEVERITY_ORDER:
+                warn("Severidad no válida.")
+                continue
+            section("CVE Lookup — Modo Guiado")
+            results = fetch_cves_cached(query, limit=50, min_severity=severity or None)
+            print_cve_table(results)
+            return
+        if choice == "3":
+            check_and_install_tools()
+            return
+        if choice == "4":
+            cache = CVECache()
+            stats = cache.stats()
+            cache.close()
+            section("Estadísticas de Caché")
+            print(f"  Entradas totales: {stats['total_entries']}")
+            print(f"  Queries únicas:   {stats['unique_queries']}")
+            return
+        if choice == "5":
+            download_sec_lists()
+            return
+        warn("Opción no válida. Selecciona un número del menú.")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=f"XPL Toolkit v{VERSION} — Advanced Vulnerability Framework",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=f"""
 Ejemplos interactivos:
-  python3 xpl_toolkit_v2.py 192.168.1.10 smb
-  python3 xpl_toolkit_v2.py example.com web-recon
-  python3 xpl_toolkit_v2.py
+	  python3 xpl_toolkit.py 192.168.1.10 smb
+	  python3 xpl_toolkit.py example.com web-recon
+	  python3 xpl_toolkit.py
 
 Solo CVE Lookup (con caché y API Key):
-  python3 xpl_toolkit_v2.py --cve-only "apache httpd 2.4" --min-severity HIGH
-  python3 xpl_toolkit_v2.py --cve-only "log4j" --output json --out cves.json
+	  python3 xpl_toolkit.py --cve-only "apache httpd 2.4" --min-severity HIGH
+	  python3 xpl_toolkit.py --cve-only "log4j" --output json --out cves.json
 
 Modo batch (sin interacción):
-  python3 xpl_toolkit_v2.py --batch 192.168.1.10 smb --batch-auth verify
-  python3 xpl_toolkit_v2.py --batch example.com web-recon --batch-auth full
+	  python3 xpl_toolkit.py --batch 192.168.1.10 smb --batch-auth verify
+	  python3 xpl_toolkit.py --batch example.com web-recon --batch-auth full
 
 Verificar herramientas:
-  python3 xpl_toolkit_v2.py --check-tools
+	  python3 xpl_toolkit.py --check-tools
 
 Descargar SecLists:
-  python3 xpl_toolkit_v2.py --download-seclists
+	  python3 xpl_toolkit.py --download-seclists
 
 Caché:
-  python3 xpl_toolkit_v2.py --cache-stats
+	  python3 xpl_toolkit.py --cache-stats
         """
     )
     parser.add_argument("target", nargs="?", help="Objetivo (IP o dominio)")
@@ -2020,9 +2085,7 @@ Caché:
     elif args.target:
         interactive_mode(args)
     else:
-        args.target = None
-        args.vulnerability = None
-        interactive_mode(args)
+        guided_menu(args)
 
 
 if __name__ == "__main__":
